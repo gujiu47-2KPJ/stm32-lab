@@ -1,0 +1,4 @@
+f = open(r'F:\python-pratice\change_first_letter.py', 'r', encoding='UTF-8')
+
+p = f.read()
+print (f'{p}')
