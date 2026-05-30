@@ -12,6 +12,17 @@ def save_error (error_message):
 def view_log():
     with open ("bug_log.txt","r",encoding='UTF-8') as f:
         print(f.read())
+def auto_log(func):
+    def wrapper(*args,**kwargs):
+        try:
+            return func(*args,**kwargs)
+        except Exception as e:
+            save_error(f'{func.__name__}出错：{str(e)}')
+            print(f'错误已记录')
+    return wrapper   
+
+
+
 
 if __name__== '__main__':
     print(f'{record_time()}')

@@ -94,7 +94,7 @@ class stu(student):
 
 s = stu("乐乐",22)
 try:
-   print(red)
+   print(stu.red)
 except Exception as e:
    print('打印错误')
    save_error(str(e))
