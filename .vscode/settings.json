@@ -1,7 +1,7 @@
 {
     "python-envs.pythonProjects": [
         {
-            "path": "bug journey.py",
+            "path": "bug_journey.py",
             "envManager": "ms-python.python:venv",
             "packageManager": "ms-python.python:pip"
         }

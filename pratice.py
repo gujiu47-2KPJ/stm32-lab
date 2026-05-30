@@ -1,7 +1,7 @@
 import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
+from bug_journey import save_error,view_log
 import time
 """def c(age):
     if age > 18:
@@ -79,7 +79,7 @@ class student :
     
 try:
    print(student.red)
-except:
+except Exception as e:
    print('打印错误')
 finally:
    print('测试结束')
@@ -94,9 +94,11 @@ class stu(student):
 
 s = stu("乐乐",22)
 try:
-   print(student.red)
-except:
+   print(red)
+except Exception as e:
    print('打印错误')
+   save_error(str(e))
+   view_log()
 finally:
    print('测试结束')
 print(s)
