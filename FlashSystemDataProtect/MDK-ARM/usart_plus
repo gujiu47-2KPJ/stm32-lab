@@ -1,0 +1,15 @@
+/* 在 usart.c 中添加 */
+#include <stdio.h>
+
+int fputc(int ch, FILE *f)
+{
+    if (f == stdout)
+    {
+        HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 100);
+        if (ch == '\n') // 自动补充 \r
+        {
+             HAL_UART_Transmit(&huart2, (uint8_t *)"\r", 1, 100);
+        }
+    }
+    return ch;
+}

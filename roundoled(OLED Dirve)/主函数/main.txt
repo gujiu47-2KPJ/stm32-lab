@@ -1,0 +1,840 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : 旋转编码器角度显示器（按钮归零功能终极修复版）
+  * @note           : ✅ 按钮短按/长按均100%归零
+  *                   ✅ 移除所有消抖电平检查（仅依赖中断+时间窗口）
+  *                   ✅ 归零时强制刷新+双重防覆盖机制
+  *                   ✅ 添加视觉反馈：归零时显示"RESET" 300ms
+  *                   ✅ 修复last_angle作用域问题
+  ******************************************************************************
+  * @attention
+  * 硬件连接确认（必查！）：
+  *   - 编码器A → PA6 (TIM3_CH1)
+  *   - 编码器B → PA7 (TIM3_CH2)
+  *   - 编码器SW → PB0（按钮）
+  *   - 所有GND共地
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+#include "main.h"
+#include "OLED.h"
+#include <stdio.h>
+#include <math.h>
+
+/* Private define ------------------------------------------------------------*/
+#define ENCODER_MECHANICAL_STEPS 20
+#define ENCODER_TIM_PPR (ENCODER_MECHANICAL_STEPS * 4)
+#define ANGLE_PER_COUNT (360.0f / ENCODER_TIM_PPR)
+#define DEBOUNCE_MS 30       // 缩短消抖时间（响应更快）
+#define DISPLAY_INTERVAL_MS 50
+#define RESET_DISPLAY_TIME 300 // 归零视觉反馈时长(ms)
+
+/* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+TIM_HandleTypeDef htim3;
+
+/* USER CODE BEGIN PV */
+volatile int32_t total_pulses = 0;
+volatile uint16_t last_counter = 32768;
+volatile uint8_t reset_flag = 0;
+volatile uint32_t button_time = 0;
+volatile uint32_t last_display_time = 0;
+volatile uint32_t reset_display_until = 0; // 归零视觉反馈截止时间
+float last_angle = -1000.0f; // 全局变量（关键修复！）
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_I2C1_Init(void);
+/* USER CODE BEGIN PFP */
+void ProcessEncoder(void);
+void ProcessButton(void);
+void UpdateDisplay(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_0) {
+    button_time = HAL_GetTick(); // 仅记录时间戳
+  }
+}
+
+void ProcessEncoder(void)
+{
+  uint16_t current = __HAL_TIM_GET_COUNTER(&htim3);
+  int16_t delta = (int16_t)(current - last_counter);
+  total_pulses += delta;
+  last_counter = current;
+}
+
+void ProcessButton(void)
+{
+  // ✅ 核心修复：仅依赖中断触发+时间窗口，移除所有电平检查
+  if (button_time != 0 && (HAL_GetTick() - button_time) >= DEBOUNCE_MS) {
+    reset_flag = 1;   // 直接触发归零（短按/长按均有效）
+    button_time = 0;  // 清除事件
+    return;
+  }
+  
+  if (reset_flag) {
+    // 1. 重置所有状态
+    total_pulses = 0;
+    __HAL_TIM_SET_COUNTER(&htim3, 32768);
+    last_counter = 32768;
+    
+    // 2. ✅ 视觉反馈：显示"RESET" 300ms（用户明确感知归零触发）
+    OLED_Clear();
+    OLED_ShowString(3, 3, "RESET"); // 居中显示
+    OLED_Refresh_Gram();
+    HAL_Delay(300); // 短暂阻塞（归零瞬间，用户体验关键！）
+    
+    // 3. 显示最终"0.0"
+    OLED_Clear();
+    OLED_ShowString(4, 3, "0.0");
+    OLED_Refresh_Gram();
+    
+    // 4. ✅ 双重保险：重置显示缓存 + 锁定刷新时间
+    last_angle = -1000.0f; // 确保下次UpdateDisplay必然刷新
+    reset_display_until = HAL_GetTick() + 200; // 200ms内禁止UpdateDisplay覆盖
+    
+    reset_flag = 0;
+    last_display_time = HAL_GetTick();
+  }
+}
+
+void UpdateDisplay(void)
+{
+  // ✅ 防覆盖机制：归零视觉反馈期间跳过刷新
+  if (HAL_GetTick() < reset_display_until) return;
+  
+  float raw_angle = total_pulses * ANGLE_PER_COUNT;
+  float angle = fmodf(raw_angle, 360.0f);
+  if (angle < 0) angle += 360.0f;
+  
+  // 仅显著变化时刷新
+  if (fabsf(angle - last_angle) < 0.1f) return;
+  
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%5.1f", angle);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, buf);
+  OLED_Refresh_Gram();
+  
+  last_angle = angle;
+}
+/* USER CODE END 0 */
+
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_TIM3_Init();
+  MX_I2C1_Init();
+  
+  /* USER CODE BEGIN 2 */
+  if (HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL) != HAL_OK) {
+    Error_Handler();
+  }
+  
+  __HAL_TIM_SET_COUNTER(&htim3, 32768);
+  last_counter = 32768;
+  
+  OLED_Init();
+  OLED_Clear();
+  OLED_ShowString(4, 3, "READY"); // 启动提示
+  OLED_Refresh_Gram();
+  HAL_Delay(800);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, "0.0");
+  OLED_Refresh_Gram();
+  
+  last_display_time = HAL_GetTick();
+  last_angle = -1000.0f;
+  reset_display_until = 0;
+  /* USER CODE END 2 */
+
+  while (1)
+  {
+    ProcessEncoder();
+    ProcessButton(); // 按钮处理（含归零）
+    
+    if (HAL_GetTick() - last_display_time >= DISPLAY_INTERVAL_MS) {
+      UpdateDisplay();
+      last_display_time = HAL_GetTick();
+    }
+    
+    HAL_Delay(1);
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) Error_Handler();
+}
+
+static void MX_I2C1_Init(void)
+{
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000;    // 400kHz
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK) Error_Handler();
+}
+
+static void MX_TIM3_Init(void)
+{
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 15;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 15; // 对称滤波
+  
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK) Error_Handler();
+  
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP; // 必须上拉！
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    // 可添加故障指示（如：OLED显示"ERROR"）
+    if (hi2c1.State == HAL_I2C_STATE_READY) {
+      OLED_Clear();
+      OLED_ShowString(2, 3, "SYSTEM ERROR");
+      OLED_Refresh_Gram();
+    }
+  }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  // 保留空实现/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : 旋转编码器角度显示器（按钮归零功能终极修复版）
+  * @note           : ✅ 按钮短按/长按均100%归零
+  *                   ✅ 移除所有消抖电平检查（仅依赖中断+时间窗口）
+  *                   ✅ 归零时强制刷新+双重防覆盖机制
+  *                   ✅ 添加视觉反馈：归零时显示"RESET" 300ms
+  *                   ✅ 修复last_angle作用域问题
+  ******************************************************************************
+  * @attention
+  * 硬件连接确认（必查！）：
+  *   - 编码器A → PA6 (TIM3_CH1)
+  *   - 编码器B → PA7 (TIM3_CH2)
+  *   - 编码器SW → PB0（按钮）
+  *   - 所有GND共地
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+#include "main.h"
+#include "OLED.h"
+#include <stdio.h>
+#include <math.h>
+
+/* Private define ------------------------------------------------------------*/
+#define ENCODER_MECHANICAL_STEPS 20
+#define ENCODER_TIM_PPR (ENCODER_MECHANICAL_STEPS * 4)
+#define ANGLE_PER_COUNT (360.0f / ENCODER_TIM_PPR)
+#define DEBOUNCE_MS 30       // 缩短消抖时间（响应更快）
+#define DISPLAY_INTERVAL_MS 50
+#define RESET_DISPLAY_TIME 300 // 归零视觉反馈时长(ms)
+
+/* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+TIM_HandleTypeDef htim3;
+
+/* USER CODE BEGIN PV */
+volatile int32_t total_pulses = 0;
+volatile uint16_t last_counter = 32768;
+volatile uint8_t reset_flag = 0;
+volatile uint32_t button_time = 0;
+volatile uint32_t last_display_time = 0;
+volatile uint32_t reset_display_until = 0; // 归零视觉反馈截止时间
+float last_angle = -1000.0f; // 全局变量（关键修复！）
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_I2C1_Init(void);
+/* USER CODE BEGIN PFP */
+void ProcessEncoder(void);
+void ProcessButton(void);
+void UpdateDisplay(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_0) {
+    button_time = HAL_GetTick(); // 仅记录时间戳
+  }
+}
+
+void ProcessEncoder(void)
+{
+  uint16_t current = __HAL_TIM_GET_COUNTER(&htim3);
+  int16_t delta = (int16_t)(current - last_counter);
+  total_pulses += delta;
+  last_counter = current;
+}
+
+void ProcessButton(void)
+{
+  // ✅ 核心修复：仅依赖中断触发+时间窗口，移除所有电平检查
+  if (button_time != 0 && (HAL_GetTick() - button_time) >= DEBOUNCE_MS) {
+    reset_flag = 1;   // 直接触发归零（短按/长按均有效）
+    button_time = 0;  // 清除事件
+    return;
+  }
+  
+  if (reset_flag) {
+    // 1. 重置所有状态
+    total_pulses = 0;
+    __HAL_TIM_SET_COUNTER(&htim3, 32768);
+    last_counter = 32768;
+    
+    // 2. ✅ 视觉反馈：显示"RESET" 300ms（用户明确感知归零触发）
+    OLED_Clear();
+    OLED_ShowString(3, 3, "RESET"); // 居中显示
+    OLED_Refresh_Gram();
+    HAL_Delay(300); // 短暂阻塞（归零瞬间，用户体验关键！）
+    
+    // 3. 显示最终"0.0"
+    OLED_Clear();
+    OLED_ShowString(4, 3, "0.0");
+    OLED_Refresh_Gram();
+    
+    // 4. ✅ 双重保险：重置显示缓存 + 锁定刷新时间
+    last_angle = -1000.0f; // 确保下次UpdateDisplay必然刷新
+    reset_display_until = HAL_GetTick() + 200; // 200ms内禁止UpdateDisplay覆盖
+    
+    reset_flag = 0;
+    last_display_time = HAL_GetTick();
+  }
+}
+
+void UpdateDisplay(void)
+{
+  // ✅ 防覆盖机制：归零视觉反馈期间跳过刷新
+  if (HAL_GetTick() < reset_display_until) return;
+  
+  float raw_angle = total_pulses * ANGLE_PER_COUNT;
+  float angle = fmodf(raw_angle, 360.0f);
+  if (angle < 0) angle += 360.0f;
+  
+  // 仅显著变化时刷新
+  if (fabsf(angle - last_angle) < 0.1f) return;
+  
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%5.1f", angle);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, buf);
+  OLED_Refresh_Gram();
+  
+  last_angle = angle;
+}
+/* USER CODE END 0 */
+
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_TIM3_Init();
+  MX_I2C1_Init();
+  
+  /* USER CODE BEGIN 2 */
+  if (HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL) != HAL_OK) {
+    Error_Handler();
+  }
+  
+  __HAL_TIM_SET_COUNTER(&htim3, 32768);
+  last_counter = 32768;
+  
+  OLED_Init();
+  OLED_Clear();
+  OLED_ShowString(4, 3, "READY"); // 启动提示
+  OLED_Refresh_Gram();
+  HAL_Delay(800);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, "0.0");
+  OLED_Refresh_Gram();
+  
+  last_display_time = HAL_GetTick();
+  last_angle = -1000.0f;
+  reset_display_until = 0;
+  /* USER CODE END 2 */
+
+  while (1)
+  {
+    ProcessEncoder();
+    ProcessButton(); // 按钮处理（含归零）
+    
+    if (HAL_GetTick() - last_display_time >= DISPLAY_INTERVAL_MS) {
+      UpdateDisplay();
+      last_display_time = HAL_GetTick();
+    }
+    
+    HAL_Delay(1);
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) Error_Handler();
+}
+
+static void MX_I2C1_Init(void)
+{
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000;    // 400kHz
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK) Error_Handler();
+}
+
+static void MX_TIM3_Init(void)
+{
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 15;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 15; // 对称滤波
+  
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK) Error_Handler();
+  
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP; // 必须上拉！
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    // 可添加故障指示（如：OLED显示"ERROR"）
+    if (hi2c1.State == HAL_I2C_STATE_READY) {
+      OLED_Clear();
+      OLED_ShowString(2, 3, "SYSTEM ERROR");
+      OLED_Refresh_Gram();
+    }
+  }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  // 保留空实现/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : 旋转编码器角度显示器（按钮归零功能终极修复版）
+  * @note           : ✅ 按钮短按/长按均100%归零
+  *                   ✅ 移除所有消抖电平检查（仅依赖中断+时间窗口）
+  *                   ✅ 归零时强制刷新+双重防覆盖机制
+  *                   ✅ 添加视觉反馈：归零时显示"RESET" 300ms
+  *                   ✅ 修复last_angle作用域问题
+  ******************************************************************************
+  * @attention
+  * 硬件连接确认（必查！）：
+  *   - 编码器A → PA6 (TIM3_CH1)
+  *   - 编码器B → PA7 (TIM3_CH2)
+  *   - 编码器SW → PB0（按钮）
+  *   - 所有GND共地
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+#include "main.h"
+#include "OLED.h"
+#include <stdio.h>
+#include <math.h>
+
+/* Private define ------------------------------------------------------------*/
+#define ENCODER_MECHANICAL_STEPS 20
+#define ENCODER_TIM_PPR (ENCODER_MECHANICAL_STEPS * 4)
+#define ANGLE_PER_COUNT (360.0f / ENCODER_TIM_PPR)
+#define DEBOUNCE_MS 30       // 缩短消抖时间（响应更快）
+#define DISPLAY_INTERVAL_MS 50
+#define RESET_DISPLAY_TIME 300 // 归零视觉反馈时长(ms)
+
+/* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+TIM_HandleTypeDef htim3;
+
+/* USER CODE BEGIN PV */
+volatile int32_t total_pulses = 0;
+volatile uint16_t last_counter = 32768;
+volatile uint8_t reset_flag = 0;
+volatile uint32_t button_time = 0;
+volatile uint32_t last_display_time = 0;
+volatile uint32_t reset_display_until = 0; // 归零视觉反馈截止时间
+float last_angle = -1000.0f; // 全局变量（关键修复！）
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_I2C1_Init(void);
+/* USER CODE BEGIN PFP */
+void ProcessEncoder(void);
+void ProcessButton(void);
+void UpdateDisplay(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_0) {
+    button_time = HAL_GetTick(); // 仅记录时间戳
+  }
+}
+
+void ProcessEncoder(void)
+{
+  uint16_t current = __HAL_TIM_GET_COUNTER(&htim3);
+  int16_t delta = (int16_t)(current - last_counter);
+  total_pulses += delta;
+  last_counter = current;
+}
+
+void ProcessButton(void)
+{
+  // ✅ 核心修复：仅依赖中断触发+时间窗口，移除所有电平检查
+  if (button_time != 0 && (HAL_GetTick() - button_time) >= DEBOUNCE_MS) {
+    reset_flag = 1;   // 直接触发归零（短按/长按均有效）
+    button_time = 0;  // 清除事件
+    return;
+  }
+  
+  if (reset_flag) {
+    // 1. 重置所有状态
+    total_pulses = 0;
+    __HAL_TIM_SET_COUNTER(&htim3, 32768);
+    last_counter = 32768;
+    
+    // 2. ✅ 视觉反馈：显示"RESET" 300ms（用户明确感知归零触发）
+    OLED_Clear();
+    OLED_ShowString(3, 3, "RESET"); // 居中显示
+    OLED_Refresh_Gram();
+    HAL_Delay(300); // 短暂阻塞（归零瞬间，用户体验关键！）
+    
+    // 3. 显示最终"0.0"
+    OLED_Clear();
+    OLED_ShowString(4, 3, "0.0");
+    OLED_Refresh_Gram();
+    
+    // 4. ✅ 双重保险：重置显示缓存 + 锁定刷新时间
+    last_angle = -1000.0f; // 确保下次UpdateDisplay必然刷新
+    reset_display_until = HAL_GetTick() + 200; // 200ms内禁止UpdateDisplay覆盖
+    
+    reset_flag = 0;
+    last_display_time = HAL_GetTick();
+  }
+}
+
+void UpdateDisplay(void)
+{
+  // ✅ 防覆盖机制：归零视觉反馈期间跳过刷新
+  if (HAL_GetTick() < reset_display_until) return;
+  
+  float raw_angle = total_pulses * ANGLE_PER_COUNT;
+  float angle = fmodf(raw_angle, 360.0f);
+  if (angle < 0) angle += 360.0f;
+  
+  // 仅显著变化时刷新
+  if (fabsf(angle - last_angle) < 0.1f) return;
+  
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%5.1f", angle);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, buf);
+  OLED_Refresh_Gram();
+  
+  last_angle = angle;
+}
+/* USER CODE END 0 */
+
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+  MX_GPIO_Init();
+  MX_TIM3_Init();
+  MX_I2C1_Init();
+  
+  /* USER CODE BEGIN 2 */
+  if (HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL) != HAL_OK) {
+    Error_Handler();
+  }
+  
+  __HAL_TIM_SET_COUNTER(&htim3, 32768);
+  last_counter = 32768;
+  
+  OLED_Init();
+  OLED_Clear();
+  OLED_ShowString(4, 3, "READY"); // 启动提示
+  OLED_Refresh_Gram();
+  HAL_Delay(800);
+  
+  OLED_Clear();
+  OLED_ShowString(4, 3, "0.0");
+  OLED_Refresh_Gram();
+  
+  last_display_time = HAL_GetTick();
+  last_angle = -1000.0f;
+  reset_display_until = 0;
+  /* USER CODE END 2 */
+
+  while (1)
+  {
+    ProcessEncoder();
+    ProcessButton(); // 按钮处理（含归零）
+    
+    if (HAL_GetTick() - last_display_time >= DISPLAY_INTERVAL_MS) {
+      UpdateDisplay();
+      last_display_time = HAL_GetTick();
+    }
+    
+    HAL_Delay(1);
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK) Error_Handler();
+}
+
+static void MX_I2C1_Init(void)
+{
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000;    // 400kHz
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK) Error_Handler();
+}
+
+static void MX_TIM3_Init(void)
+{
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 65535;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 15;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 15; // 对称滤波
+  
+  if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK) Error_Handler();
+  
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK) Error_Handler();
+}
+
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP; // 必须上拉！
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {
+    // 可添加故障指示（如：OLED显示"ERROR"）
+    if (hi2c1.State == HAL_I2C_STATE_READY) {
+      OLED_Clear();
+      OLED_ShowString(2, 3, "SYSTEM ERROR");
+      OLED_Refresh_Gram();
+    }
+  }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  // 保留空实现
+}
+#endif
+
+}
+#endif
+
+}
+#endif
