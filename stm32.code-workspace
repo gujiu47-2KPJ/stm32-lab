@@ -1,0 +1,35 @@
+{
+    "folders": [
+        {
+            "name": "vscode_stm32",
+            "path": "vscode_stm32"
+        },
+        {
+            "name": "ledshark",
+            "path": "ledshark"
+        },
+        {
+            "name": "LED1",
+            "path": "LED1"
+        },
+        {
+            "name": "flowspeedledcontrol",
+            "path": "flowspeedledcontrol"
+        }
+    ],
+    "settings": {
+        "cmake.cmakePath": "C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe",
+        "cmake.configureArgs": [
+            "-DCMAKE_COMMAND=C:/Users/gujiu/AppData/Local/STM32Cube/bundles/cmake/4.2.3+st.1/bin/cmake.exe"
+        ],
+        "cmake.preferredGenerators": [
+            "Ninja"
+        ],
+        "stm32cube-ide-clangd.path": "cube",
+        "stm32cube-ide-clangd.arguments": [
+            "starm-clangd",
+            "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
+            "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
+        ]
+    }
+}
