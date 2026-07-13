@@ -42,7 +42,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+volatile uint8_t button_flag = 0;  // 按钮按下标志位
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,6 +98,14 @@ int main(void)
    HAL_Delay(500);/* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    
+    // 检测按钮按下标志
+    if (button_flag) {
+        HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);  // 切换LED状态
+        button_flag = 0;  // 清除标志
+        HAL_Delay(200);   // 去抖动延时
+    }
+    
   }
   /* USER CODE END 3 */
 }
@@ -169,6 +177,17 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief 外部中断回调函数
+  * @param GPIO_Pin 按下的引脚号
+  * @retval None
+  */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == GPIO_PIN_0) {
+        button_flag = 1;  // 设置按钮按下标志
+    }
+}
 
 /* USER CODE END 4 */
 

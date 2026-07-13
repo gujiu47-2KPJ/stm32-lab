@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32f1xx_hal.h"
+#include "stm32f1xx_hal_gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,7 +44,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
- 
+ volatile uint8_t button_flag  = 0;
+volatile uint8_t interrupt_count = 0;
+volatile uint8_t button_press_count = 0;  // 按钮按下计数器
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -94,13 +98,40 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-  
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
+    // 调试：LED快速闪烁表示没有中断
+    //HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+    //HAL_Delay(100);
+    
+    if(button_flag){
+      button_flag = 0;
+      这个中断回调函数的执行顺序是在主函数中的 while 循环后。
+      // 消抖延时
+      HAL_Delay(20);        
+      
+      // 再次检查按钮状态
+      if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_RESET)
+      {
+          button_press_count++;  // 按钮按下计数
+          
+          // 检查是否达到3次
+          if(button_press_count >= 3)
+          {
+              // 切换LED状态
+              HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+              
+              // 重置计数器
+              button_press_count = 0;
+          }
+      }
+      
+      HAL_Delay(200);
+    }
   }
-  /* USER CODE END 3 */
+  /* USER CODE END WHILE */
+
+  /* USER CODE BEGIN 3 */
 }
+  /* USER CODE END 3 */
 
 /**
   * @brief System Clock Configuration
@@ -180,10 +211,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void EXTI0_IRQHandler(void) {
-    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
-}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_PIN){
+    if(GPIO_PIN == GPIO_PIN_0){
+      button_flag = 1;
+      interrupt_count++;
+      button_press_count++;  // 按钮按下计数
+    }
+    }
 /* USER CODE END 4 */
+
 
 /**
   * @brief  This function is executed in case of error occurrence.
