@@ -42,14 +42,14 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
 )
 
-# Add sources to executable
+# Add sources to executable (使用绝对路径确保Windows下能找到文件)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
+    ${CMAKE_CURRENT_SOURCE_DIR}/Hardware/OLED.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/Hardware
 )
 
 # Add project symbols (macros)
