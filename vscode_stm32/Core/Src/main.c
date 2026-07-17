@@ -50,23 +50,32 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim2;          // 定时器2句柄
 
-UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart1;        // 串口1句柄
 
 /* USER CODE BEGIN PV */
+// 系统工作模式枚举定义
+// 逻辑优化: 枚举值 = 按键编号 = 串口命令字符,实现一一对应
 typedef enum{
-   mode_idle = 0,
-   mode_shark,
-   mode_load,
-   mode_running
+   mode_idle = 0,      // 0 = 空闲模式(字符'0')
+   mode_running = 1,   // 1 = 运行模式/流水灯(按键1/字符'1')
+   mode_load = 2,      // 2 = 负载模式/三灯全灭(按键2/字符'2')
+   mode_shark = 3      // 3 = 鲨鱼模式/两端vs中间(按键3/字符'3')
 } system_mode_t;
-volatile system_mode_t current_mode = mode_idle;
-volatile uint8_t key_press = 0;
-volatile uint8_t system_state = 0;
+volatile system_mode_t current_mode = mode_idle;  // 当前工作模式,默认空闲
+volatile uint8_t key_press = 0;                   // 按键按下标志,0=无按键,1/2/3=按键编号
+volatile uint8_t system_state = 0;                // 系统状态,0=空闲等待按键,1=正在处理按键
 
-const char* mode_name[]= {"IDLE","shark","load","running"};
-uint8_t rx_buffer[1];
+volatile uint8_t receive_status = 0;            // 串口接收标志位(中断回调中修改,主循环中读取,需volatile防优化)
+
+// 逻辑优化: mode_name数组索引必须与枚举值严格对应
+// mode_name[0]="IDLE"     → mode_idle(0)
+// mode_name[1]="running"  → mode_running(1)
+// mode_name[2]="load"     → mode_load(2)
+// mode_name[3]="shark"    → mode_shark(3)
+const char* mode_name[]= {"IDLE","running","load","shark"};  // 模式名称字符串数组,用于串口输出
+uint8_t rx_buffer[1];                                         // 串口接收缓冲区(单字节)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,7 +84,7 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void Serial_ProcessChar(uint8_t ch);  // 串口命令处理函数声明
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -113,10 +122,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM2_Init();
+  
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-    HAL_TIM_Base_Start_IT(&htim2);//启动定时器
-    HAL_UART_Receive_IT(&huart1, rx_buffer, 1);//启动串口接收
+    HAL_TIM_Base_Start_IT(&htim2);                      // 启动定时器2中断,定时周期触发回调
+    HAL_UART_Receive_IT(&huart1, rx_buffer, 1);         // 启动串口1中断接收,每次接收1字节
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -162,8 +172,9 @@ int main(void)
           key_press = 0;
       }
       
-      // LED 模式显示
-      switch (current_mode)
+    
+        
+          switch (current_mode)
           {
               case mode_idle:
                   HAL_GPIO_TogglePin(GPIOC,   GPIO_PIN_13);
@@ -186,7 +197,7 @@ int main(void)
                   HAL_Delay(300);  // 间隔，让肉眼看清一轮结束
                   break;
 
-              case mode_load:  // 两端 vs 中间：PA8+PA10 ↔ PA9
+              case mode_shark:  // 两端 vs 中间：PA8+PA10 ↔ PA9
                   HAL_GPIO_WritePin(GPIOA,   GPIO_PIN_8|GPIO_PIN_10,  SET);
                   HAL_GPIO_WritePin(GPIOA,   GPIO_PIN_9,  RESET);
                   HAL_Delay(300);
@@ -196,21 +207,22 @@ int main(void)
                   HAL_Delay(300);
                   break;
 
-              case mode_shark:  // 三个一起闪
-                  HAL_GPIO_WritePin(GPIOA,   GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10,
-                                     SET);
-                  HAL_Delay(250);
+              case mode_load:  // 逻辑优化: 三个LED全灭(负载模式-待机状态)
+                  
                   HAL_GPIO_WritePin(GPIOA,   GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10,
                                      RESET);
-                  HAL_Delay(250);
+                  
                   break;
           }
-  }
+         if(receive_status != 0){
+      Serial_ProcessChar(rx_buffer[0]);
+          receive_status = 0;
+          }         
     /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
-
+}
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -269,9 +281,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 7199;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 999;
+  htim2.Init.Prescaler = 7199;                              // 预分频: 72MHz/(7199+1) = 10KHz
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;              // 向上计数模式
+  htim2.Init.Period = 999;                                  // 自动重装载值: 10KHz/(999+1) = 10Hz,即100ms周期
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -311,13 +323,13 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.BaudRate = 115200;                            // 波特率: 115200bps
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;              // 数据位: 8位
+  huart1.Init.StopBits = UART_STOPBITS_1;                   // 停止位: 1位
+  huart1.Init.Parity = UART_PARITY_NONE;                    // 校验位: 无
+  huart1.Init.Mode = UART_MODE_TX_RX;                       // 模式: 收发双工
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;              // 硬件流控: 无
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;          // 过采样: 16倍
   if (HAL_UART_Init(&huart1) != HAL_OK)
   {
     Error_Handler();
@@ -347,39 +359,39 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);       // PC13初始电平拉高(LED默认熄灭)
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10, GPIO_PIN_RESET);  // PA8/PA9/PA10初始拉低
 
-  /*Configure GPIO pin : PC13 */
+  /*Configure GPIO pin : PC13 (板载LED) */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA0 PA1 PA2 */
+  /*Configure GPIO pins : PA0 PA1 PA2 (按键输入,下降沿中断) */
   GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA8 PA9 PA10 */
+  /*Configure GPIO pins : PA8 PA9 PA10 (LED输出) */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  /* EXTI interrupt init (按键外部中断配置) */
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);                  // PA0外部中断,优先级0-0
   HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI1_IRQn, 0, 0);                  // PA1外部中断,优先级0-0
   HAL_NVIC_EnableIRQ(EXTI1_IRQn);
 
-  HAL_NVIC_SetPriority(EXTI2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 0, 0);                  // PA2外部中断,优先级0-0
   HAL_NVIC_EnableIRQ(EXTI2_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -388,35 +400,82 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void Serial_ProcessChar(uint8_t ch){
+  // 逻辑优化: 主循环已判断 receive_status != 0 才调用此函数,函数内无需重复判断
+  switch(ch){
+    case '1':
+      current_mode = mode_running;
+      break;
+    case '2':
+      current_mode = mode_load;
+      break;
+    case '3':
+      current_mode = mode_shark;
+      break;
+    case '0':
+      current_mode = mode_idle;
+      break;
+    default:
+      return;  // 逻辑优化: 非法命令直接返回,不发送确认消息
+  }
+  // 逻辑优化: 模式切换成功后,发送确认消息回电脑
+  char send_buf[50];
+  sprintf(send_buf, "Mode changed to: %s\r\n", mode_name[current_mode]);
+  HAL_UART_Transmit(&huart1, (uint8_t*)send_buf, strlen(send_buf), HAL_MAX_DELAY);
+}
+/**
+  * @brief  定时器周期中断回调函数
+  * @param  htim: 定时器句柄指针
+  * @retval None
+  * @note   当定时器2计数溢出到达周期值时自动调用
+  *         定时通过串口上报当前系统工作模式
+  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   if (htim->Instance==TIM2) {
     char send_buf[50];
+    // 格式化当前模式名称,准备发送
     sprintf(send_buf, "current_mode = %s\r\n",mode_name[current_mode]);
+    // 通过串口1阻塞发送模式信息
     HAL_UART_Transmit(&huart1,(uint8_t*)send_buf,strlen(send_buf),HAL_MAX_DELAY);
   
   }
 }
 
+/**
+  * @brief  串口接收完成中断回调函数
+  * @param  huart: 串口句柄指针
+  * @retval None
+  * @note   当串口接收指定数据量后自动调用,接收完成后重新开启中断接收
+  *         实现串口数据的持续接收
+  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
   if (huart->Instance == USART1) {
-    HAL_UART_Receive_IT(&huart1,rx_buffer, 1);//发送后结束回调
-  
+    // 重新开启串口中断接收,实现持续接收(每次接收1字节)
+    HAL_UART_Receive_IT(&huart1,rx_buffer, 1);
+    receive_status = 1;
   }
 }
 
+/**
+  * @brief  外部中断(EXTI)回调函数
+  * @param  GPIO_PIN: 触发中断的GPIO引脚编号
+  * @retval None
+  * @note   当PA0/PA1/PA2按键按下时触发下降沿中断
+  *         在空闲状态下记录按键编号并进入处理状态
+  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_PIN){ 
-   if (system_state == 0) {
-    if (GPIO_PIN == GPIO_PIN_0) {
+   if (system_state == 0) {                               // 仅在空闲状态响应按键
+    if (GPIO_PIN == GPIO_PIN_0) {                         // 按键1按下(PA0)
        key_press = 1;
-       system_state = 1;
+       system_state = 1;                                   // 进入处理状态,防止重复触发
     }
-    else if (GPIO_PIN == GPIO_PIN_1)
+    else if (GPIO_PIN == GPIO_PIN_1)                      // 按键2按下(PA1)
     {
         key_press = 2;
         system_state = 1;
     }
-    else if (GPIO_PIN == GPIO_PIN_2)
+    else if (GPIO_PIN == GPIO_PIN_2)                      // 按键3按下(PA2)
     {
         key_press = 3;
         system_state = 1;
