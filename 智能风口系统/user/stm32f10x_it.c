@@ -131,10 +131,13 @@ void PendSV_Handler(void)
   * @brief  This function handles SysTick Handler.
   * @param  None
   * @retval None
+  * @note   已移至 main.c 中实现，用于 1ms 系统滴答
   */
+/*
 void SysTick_Handler(void)
 {
 }
+*/
 
 /******************************************************************************/
 /*                 STM32F10x Peripherals Interrupt Handlers                   */
