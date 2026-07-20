@@ -1,0 +1,53 @@
+﻿{
+  "mcpServers": {
+    "stm32-analysis": {
+      "type": "stdio",
+      "command": "C:\\Users\\gujiu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": [
+        "D:\\vscode\\stm32-analysis-mcp\\stm32_analysis_mcp.py"
+      ]
+    },
+    "serial-mcp": {
+      "type": "stdio",
+      "command": "C:\\Users\\gujiu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["-m", "serial_mcp_server.server"]
+    },
+    "git-mcp": {
+      "type": "stdio",
+      "command": "C:\\Users\\gujiu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["-m", "mcp_server_git"]
+    },
+    "fetch-mcp": {
+      "type": "stdio",
+      "command": "C:\\Users\\gujiu\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["-m", "mcp_server_fetch"]
+    },
+    "mcp-filesystem": {
+      "type": "stdio",
+      "command": "E:\\node.js\\node.exe",
+      "args": [
+        "D:\\npm\\node_modules\\@modelcontextprotocol\\server-filesystem\\dist\\index.js",
+        "D:\\vscode\\mcp-data"
+      ]
+    },
+    "desktop-commander": {
+      "type": "stdio",
+      "command": "E:\\node.js\\node.exe",
+      "args": [
+        "D:\\npm\\node_modules\\@wonderwhy-er\\desktop-commander\\dist\\index.js"
+      ]
+    },
+    "upstash": {
+      "type": "stdio",
+      "command": "E:\\node.js\\node.exe",
+      "args": [
+        "D:\\npm\\node_modules\\@upstash\\mcp-server\\dist\\index.js"
+      ]
+    },
+    "github": {
+      "type": "stdio",
+      "command": "D:\\vscode\\mcp-servers\\github-mcp-server\\github-mcp-server.exe",
+      "args": []
+    }
+  }
+}
