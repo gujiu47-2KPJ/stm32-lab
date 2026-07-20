@@ -55,3 +55,9 @@ AI_DEBUG/
 Thumbs.db
 Desktop.ini
 .reasonix/
+.continue/
+.serial_mcp/
+
+# ========== MCP 服务器配置 ==========
+.mcp.json
+vscode_stm32/.mcp.json
