@@ -197,9 +197,14 @@ int main(void)
   /* 检测并初始化 SGP30 空气质量传感器
    * (注: 调用的是 sgp30.h 提供的标准接口; sgp30.c 内已换为成熟驱动实现,
    *  本处调用方式保持不变) */
+  OLED_ShowString(0, 2, "Loading...   ");      /* 上电稳定期间提示加载中 */
+  HAL_Delay(2000);                       /* 等待: SGP30 上电需约 2s 内部启动/热稳定,
+                                          *   过早发命令会无应答导致 FAIL */
+  OLED_ShowString(0, 2, "             ");      /* 清除加载提示, 进入正常显示 */
+
   uint8_t sgp30_ok = SGP30_Detect();
 
-  if(sgp30_ok) SGP30_Init();
+  if(sgp30_ok == 1) SGP30_Init();
 
   /* 检测并初始化 AHT20+BMP280 温湿压传感器 */
   uint8_t wd_ok = WarmDamp_Detect();
@@ -290,7 +295,9 @@ int main(void)
                   sprintf(line, "TVOC:%uppb", tvoc);
                   OLED_ShowString(0, 1, line);
                 }else{
-                  OLED_ShowString(0, 0, "SGP30: FAIL");
+                  /* 0: 地址无应答 → 硬件/供电/接线/上拉问题 */
+                  OLED_ShowString(0, 0, "SGP30: FAIL ");
+                  OLED_ShowString(0, 1, "HW: NO ACK");
                 }
                 break;
         }
