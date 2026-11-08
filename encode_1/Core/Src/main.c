@@ -194,12 +194,16 @@ int main(void)
   if(ok1) MPU6050_Init(0x68);    /* 模块存在则唤醒 */
   if(ok2) MPU6050_Init(0x69);    /* 模块存在则唤醒 */
 
-  /* 检测并初始化 SGP30 空气质量传感器 */
+  /* 检测并初始化 SGP30 空气质量传感器
+   * (注: 调用的是 sgp30.h 提供的标准接口; sgp30.c 内已换为成熟驱动实现,
+   *  本处调用方式保持不变) */
   uint8_t sgp30_ok = SGP30_Detect();
+
   if(sgp30_ok) SGP30_Init();
 
   /* 检测并初始化 AHT20+BMP280 温湿压传感器 */
   uint8_t wd_ok = WarmDamp_Detect();
+
   if(wd_ok) WarmDamp_Init();
 
 	static uint8_t last_val = 0xFF;
@@ -228,6 +232,7 @@ int main(void)
 
       /* 检测编码器是否旋动 (翻页触发) */
       if(Encode_Moved()){
+        OLED_Clear();
         page = Encode_ReadDelta();
       }
       switch(page){
@@ -251,12 +256,15 @@ int main(void)
 
                 /* OLED 第 1~3 行: 显示加速度和陀螺仪数据 */
                 sprintf(line, "AX:%-6d GX:%-6d", ax_m, gx_m);
+
                 OLED_ShowString(0, 1, line);
 
                 sprintf(line, "AY:%-6d GY:%-6d", ay_m, gy_m);
+
                 OLED_ShowString(0, 2, line);
 
                 sprintf(line, "AZ:%-6d GZ:%-6d", az_m, gz_m);
+                
                 OLED_ShowString(0, 3, line);
                 break;
           case 1:
@@ -267,8 +275,8 @@ int main(void)
                   OLED_ShowString(0, 0, line);
                   sprintf(line, "P:%.0fPa", press);
                   OLED_ShowString(0, 1, line);
-                  sprintf(line, "STATUS:OK");
-                  OLED_ShowString(0, 2, line);
+                  //sprintf(line, "STATUS:OK");
+                  //OLED_ShowString(0, 2, line);
                 }else{
                   OLED_ShowString(0, 0, "Sensor: FAIL");
                 }

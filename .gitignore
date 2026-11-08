@@ -29,6 +29,9 @@ RTE/
 
 # ========== Keil 构建输出子目录 ==========
 **/MDK-ARM/*/
+# 例外: 放开驱动源码目录 (Hardware), 使其可提交到仓库
+!**/MDK-ARM/Hardware/
+!**/MDK-ARM/Hardware/**
 
 # ========== CMake / CLion 构建 ==========
 build/
