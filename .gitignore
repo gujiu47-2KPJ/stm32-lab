@@ -1,0 +1,41 @@
+# ========== Keil MDK-ARM 编译产物 ==========
+*.o
+*.d
+*.crf
+*.dep
+*.axf
+*.hex
+*.htm
+*.lnp
+*.lst
+*.map
+*.sct
+*.iex
+*.bak
+*.sbr
+*.scvd
+
+# ========== Keil 构建中间目录 ==========
+**/Objects/
+**/Listings/
+**/DebugConfig/
+**/RTE/
+
+# ========== Keil 配置含用户名，不入库 ==========
+*.uvguix.*
+
+# ========== 隐藏缓存 / 工具 ==========
+.omo/
+.reasonix/
+.continue/
+.serial_mcp/
+.mcp.json
+
+# ========== 操作系统 ==========
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ========== IDE ==========
+.vscode/
+.idea/
